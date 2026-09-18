@@ -2,6 +2,7 @@ package com.jobscheduler.worker;
 
 import com.jobscheduler.config.JobSchedulerProperties;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.net.InetAddress;
@@ -19,10 +20,16 @@ public class WorkerIdentity {
 
     private final String id;
 
+    @Autowired
     public WorkerIdentity(JobSchedulerProperties properties) {
         String configured = properties.worker().instanceId();
         this.id = configured != null && !configured.isBlank() ? configured.strip() : generate();
         log.info("Worker instance id: {}", id);
+    }
+
+    /** An explicit id, e.g. to simulate several instances inside one test JVM. */
+    public WorkerIdentity(String id) {
+        this.id = id;
     }
 
     public String id() {

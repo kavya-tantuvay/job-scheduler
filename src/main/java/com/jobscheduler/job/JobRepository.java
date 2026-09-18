@@ -135,6 +135,62 @@ public interface JobRepository extends JpaRepository<Job, UUID>, JpaSpecificatio
             """, nativeQuery = true)
     int releaseClaim(@Param("id") UUID id, @Param("workerId") String workerId, @Param("attempt") int attempt);
 
+    /**
+     * Recovers jobs whose worker stopped reporting (crashed, hung, lost its DB connection):
+     * RUNNING jobs whose lease ({@code locked_at}) is older than the timeout go back to PENDING, or
+     * to DEAD if they have used all their attempts. The latter stops a "poison" job that keeps
+     * killing its worker from being retried forever. A LEASE_EXPIRED attempt row is recorded for each.
+     *
+     * <p>{@code SKIP LOCKED} skips a row whose worker is committing its result at this moment. If
+     * the original worker finishes later, its fenced update matches nothing and is discarded.
+     *
+     * @return number of jobs recovered
+     */
+    @Modifying
+    @Query(value = """
+            WITH expired AS (
+                SELECT id, attempts, max_attempts, locked_by, locked_at
+                  FROM jobs
+                 WHERE status = 'RUNNING'
+                   AND locked_at < now() - (:leaseMillis * INTERVAL '1 millisecond')
+                 ORDER BY locked_at
+                 LIMIT :limit
+                   FOR UPDATE SKIP LOCKED
+            ),
+            recovered AS (
+                UPDATE jobs j
+                   SET status     = CASE WHEN e.attempts >= e.max_attempts THEN 'DEAD' ELSE 'PENDING' END,
+                       last_error = 'Lease expired: worker ' || e.locked_by
+                                    || ' did not report a result within ' || :leaseText,
+                       run_at     = CASE WHEN e.attempts >= e.max_attempts THEN j.run_at ELSE now() END,
+                       locked_at  = CASE WHEN e.attempts >= e.max_attempts THEN j.locked_at END,
+                       locked_by  = CASE WHEN e.attempts >= e.max_attempts THEN j.locked_by END,
+                       updated_at = now()
+                  FROM expired e
+                 WHERE j.id = e.id
+                RETURNING j.id, j.last_error
+            )
+            INSERT INTO job_attempts (job_id, attempt, worker_id, started_at, finished_at, outcome, error)
+            SELECT e.id, e.attempts, e.locked_by, e.locked_at, now(), 'LEASE_EXPIRED', r.last_error
+              FROM expired e
+              JOIN recovered r ON r.id = e.id
+            """, nativeQuery = true)
+    int recoverExpiredLeases(@Param("leaseMillis") long leaseMillis, @Param("leaseText") String leaseText,
+                             @Param("limit") int limit);
+
+    /**
+     * Dead-letter redrive: DEAD/FAILED → PENDING with {@code additionalAttempts} more attempts.
+     * Attempt numbering continues, so the job's history stays intact.
+     */
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query(value = """
+            UPDATE jobs
+               SET status = 'PENDING', max_attempts = attempts + :additionalAttempts, run_at = now(),
+                   locked_at = NULL, locked_by = NULL, updated_at = now()
+             WHERE id = :id AND status IN ('DEAD', 'FAILED')
+            """, nativeQuery = true)
+    int requeueFinishedUnsuccessfully(@Param("id") UUID id, @Param("additionalAttempts") int additionalAttempts);
+
     /** PENDING → CANCELLED. Returns 0 if the job doesn't exist or was already claimed/finished. */
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query(value = """

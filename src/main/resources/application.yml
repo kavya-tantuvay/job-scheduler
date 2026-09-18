@@ -67,3 +67,7 @@ jobs:
   retry:
     base-delay: 2s
     max-delay: 5m
+  reaper:
+    lease-timeout: 5m
+    interval: 30s
+    batch-size: 100

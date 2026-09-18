@@ -17,7 +17,8 @@ public record JobSchedulerProperties(
         @Valid @DefaultValue Submission submission,
         @Valid @DefaultValue Worker worker,
         @Valid @DefaultValue Poller poller,
-        @Valid @DefaultValue Retry retry) {
+        @Valid @DefaultValue Retry retry,
+        @Valid @DefaultValue Reaper reaper) {
 
     /**
      * @param defaultMaxAttempts attempts allowed when a submission doesn't specify one
@@ -52,5 +53,20 @@ public record JobSchedulerProperties(
     public record Retry(
             @NotNull @DefaultValue("2s") Duration baseDelay,
             @NotNull @DefaultValue("5m") Duration maxDelay) {
+    }
+
+    /**
+     * Recovery of jobs whose worker died mid-run.
+     *
+     * @param leaseTimeout how long a job may stay RUNNING before it is presumed abandoned. There
+     *                     is no heartbeat, so this must be longer than the slowest job's runtime,
+     *                     otherwise healthy long jobs get re-run.
+     * @param interval     how often to look for expired leases
+     * @param batchSize    maximum jobs recovered per statement
+     */
+    public record Reaper(
+            @NotNull @DefaultValue("5m") Duration leaseTimeout,
+            @NotNull @DefaultValue("30s") Duration interval,
+            @Min(1) @Max(1000) @DefaultValue("100") int batchSize) {
     }
 }

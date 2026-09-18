@@ -4,6 +4,7 @@ import com.jobscheduler.common.dto.ApiError;
 import com.jobscheduler.common.dto.PageResponse;
 import com.jobscheduler.job.dto.JobAttemptResponse;
 import com.jobscheduler.job.dto.JobResponse;
+import com.jobscheduler.job.dto.RetryJobRequest;
 import com.jobscheduler.job.dto.SubmitJobRequest;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -31,7 +32,7 @@ import java.net.URI;
 import java.util.List;
 import java.util.UUID;
 
-@Tag(name = "Jobs", description = "Submit, inspect and cancel jobs")
+@Tag(name = "Jobs", description = "Submit, inspect, cancel and retry jobs")
 @RestController
 @RequestMapping("/api/jobs")
 public class JobController {
@@ -109,5 +110,18 @@ public class JobController {
     @PostMapping("/{id}/cancel")
     public JobResponse cancel(@PathVariable UUID id) {
         return JobResponse.from(jobService.cancel(id));
+    }
+
+    @Operation(summary = "Retry a DEAD or FAILED job (dead-letter redrive)",
+            description = "Puts the job back in the queue with extra attempts. Attempt numbering and history are kept.")
+    @ApiResponse(responseCode = "200", description = "Job re-queued as PENDING")
+    @ApiResponse(responseCode = "404", description = "No such job",
+            content = @Content(schema = @Schema(implementation = ApiError.class)))
+    @ApiResponse(responseCode = "409", description = "Job is not DEAD or FAILED",
+            content = @Content(schema = @Schema(implementation = ApiError.class)))
+    @PostMapping("/{id}/retry")
+    public JobResponse retry(@PathVariable UUID id,
+                             @Valid @RequestBody(required = false) RetryJobRequest request) {
+        return JobResponse.from(jobService.retry(id, request == null ? null : request.additionalAttempts()));
     }
 }

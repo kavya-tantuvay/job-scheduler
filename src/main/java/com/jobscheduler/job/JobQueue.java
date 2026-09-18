@@ -4,6 +4,7 @@ import com.jobscheduler.retry.RetryDecision;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Comparator;
 import java.util.List;
@@ -87,6 +88,12 @@ public class JobQueue {
         }
         attemptRepository.save(JobAttempt.failed(job, failure));
         return Optional.of(next);
+    }
+
+    /** @return number of RUNNING jobs with an expired lease that were re-queued or dead-lettered */
+    @Transactional
+    public int recoverExpiredLeases(Duration leaseTimeout, int limit) {
+        return jobRepository.recoverExpiredLeases(leaseTimeout.toMillis(), leaseTimeout.toString(), limit);
     }
 
     /** Puts a claimed-but-never-started job back in the queue. */

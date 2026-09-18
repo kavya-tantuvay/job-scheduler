@@ -132,6 +132,25 @@ public class JobService {
     }
 
     /**
+     * Dead-letter redrive: gives a DEAD or FAILED job {@code additionalAttempts} more attempts and
+     * puts it back in the queue, e.g. after the bug or outage that killed it has been fixed.
+     */
+    @Transactional
+    public Job retry(UUID id, Integer additionalAttempts) {
+        Job job = get(id);
+        if (job.getStatus() != JobStatus.DEAD && job.getStatus() != JobStatus.FAILED) {
+            throw new ConflictException("Only DEAD or FAILED jobs can be retried; job %s is %s"
+                    .formatted(id, job.getStatus()));
+        }
+        int extra = Objects.requireNonNullElse(additionalAttempts, properties.submission().defaultMaxAttempts());
+        if (jobRepository.requeueFinishedUnsuccessfully(id, extra) == 0) {
+            throw new ConflictException("Job %s changed state before it could be retried".formatted(id));
+        }
+        log.info("Re-queued {} job {} with {} more attempt(s)", job.getStatus(), id, extra);
+        return get(id);
+    }
+
+    /**
      * A key may only be reused for the same request. Fields the client left out are not compared,
      * since their defaults (e.g. runAt = now) legitimately differ between calls.
      */

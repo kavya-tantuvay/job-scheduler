@@ -8,8 +8,9 @@ import java.util.Set;
  *
  * <pre>
  *   PENDING ──claim──► RUNNING ──ok──────────► SUCCEEDED
- *      │   ◄──retry /    │  ├──non-retryable─► FAILED
- *      │     lease expiry┘  └──retries spent─► DEAD   (dead-letter)
+ *      │   ◄──retry /    │  ├──non-retryable─► FAILED ─┐
+ *      │     lease expiry┘  └──retries spent─► DEAD  ──┤ (dead-letter)
+ *      │   ◄──────────────── manual retry (redrive) ───┘
  *      └──cancel──► CANCELLED
  * </pre>
  */
@@ -26,8 +27,9 @@ public enum JobStatus {
     DEAD,
     CANCELLED;
 
+    /** True once the queue will not touch the job again on its own (only a manual retry can revive it). */
     public boolean isTerminal() {
-        return allowedTransitions().isEmpty();
+        return this == SUCCEEDED || this == FAILED || this == DEAD || this == CANCELLED;
     }
 
     public boolean canTransitionTo(JobStatus target) {
@@ -38,7 +40,8 @@ public enum JobStatus {
         return switch (this) {
             case PENDING -> EnumSet.of(RUNNING, CANCELLED);
             case RUNNING -> EnumSet.of(SUCCEEDED, FAILED, DEAD, PENDING);
-            case SUCCEEDED, FAILED, DEAD, CANCELLED -> EnumSet.noneOf(JobStatus.class);
+            case FAILED, DEAD -> EnumSet.of(PENDING);
+            case SUCCEEDED, CANCELLED -> EnumSet.noneOf(JobStatus.class);
         };
     }
 }

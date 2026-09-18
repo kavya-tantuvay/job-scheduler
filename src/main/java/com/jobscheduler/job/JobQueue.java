@@ -42,4 +42,22 @@ public class JobQueue {
                 .sorted(DISPATCH_ORDER)
                 .toList();
     }
+
+    /** @return false if the claim was lost (job reclaimed by someone else); the result is discarded */
+    @Transactional
+    public boolean markSucceeded(ClaimedJob job) {
+        return jobRepository.markSucceeded(job.id(), job.workerId(), job.attempt()) == 1;
+    }
+
+    /** @return false if the claim was lost (job reclaimed by someone else); the result is discarded */
+    @Transactional
+    public boolean markFailed(ClaimedJob job, String error) {
+        return jobRepository.markFailed(job.id(), job.workerId(), job.attempt(), error) == 1;
+    }
+
+    /** Puts a claimed-but-never-started job back in the queue. */
+    @Transactional
+    public boolean release(ClaimedJob job) {
+        return jobRepository.releaseClaim(job.id(), job.workerId(), job.attempt()) == 1;
+    }
 }

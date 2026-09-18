@@ -51,6 +51,41 @@ public interface JobRepository extends JpaRepository<Job, UUID>, JpaSpecificatio
             """, nativeQuery = true)
     List<Job> claimDueJobs(@Param("limit") int limit, @Param("workerId") String workerId);
 
+    // ---- Outcome of a claim. Each update is fenced on (locked_by, attempts): it only applies
+    // ---- while this exact claim still owns the job. Returns the number of rows changed (0 or 1).
+
+    /** RUNNING → SUCCEEDED. Lock columns are kept as a record of who ran the job last. */
+    @Modifying
+    @Query(value = """
+            UPDATE jobs
+               SET status = 'SUCCEEDED', updated_at = now()
+             WHERE id = :id AND status = 'RUNNING' AND locked_by = :workerId AND attempts = :attempt
+            """, nativeQuery = true)
+    int markSucceeded(@Param("id") UUID id, @Param("workerId") String workerId, @Param("attempt") int attempt);
+
+    /** RUNNING → FAILED (terminal). */
+    @Modifying
+    @Query(value = """
+            UPDATE jobs
+               SET status = 'FAILED', last_error = :error, updated_at = now()
+             WHERE id = :id AND status = 'RUNNING' AND locked_by = :workerId AND attempts = :attempt
+            """, nativeQuery = true)
+    int markFailed(@Param("id") UUID id, @Param("workerId") String workerId, @Param("attempt") int attempt,
+                   @Param("error") String error);
+
+    /**
+     * RUNNING → PENDING for a claim that was never executed (e.g. the worker pool rejected it).
+     * The attempt is given back because the handler never ran.
+     */
+    @Modifying
+    @Query(value = """
+            UPDATE jobs
+               SET status = 'PENDING', attempts = attempts - 1,
+                   locked_at = NULL, locked_by = NULL, updated_at = now()
+             WHERE id = :id AND status = 'RUNNING' AND locked_by = :workerId AND attempts = :attempt
+            """, nativeQuery = true)
+    int releaseClaim(@Param("id") UUID id, @Param("workerId") String workerId, @Param("attempt") int attempt);
+
     /** PENDING → CANCELLED. Returns 0 if the job doesn't exist or was already claimed/finished. */
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query(value = """

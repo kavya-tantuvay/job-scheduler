@@ -68,6 +68,9 @@ management:
 springdoc:
   swagger-ui:
     path: /swagger-ui.html
+    tags-sorter: alpha
+    display-request-duration: true
+    try-it-out-enabled: true
 
 jobs:
   submission:

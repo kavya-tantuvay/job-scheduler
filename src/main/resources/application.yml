@@ -64,3 +64,6 @@ jobs:
   poller:
     interval: 1s
     batch-size: 10
+  retry:
+    base-delay: 2s
+    max-delay: 5m

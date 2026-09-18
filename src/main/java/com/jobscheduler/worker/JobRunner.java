@@ -2,6 +2,9 @@ package com.jobscheduler.worker;
 
 import com.jobscheduler.job.ClaimedJob;
 import com.jobscheduler.job.JobQueue;
+import com.jobscheduler.job.JobStatus;
+import com.jobscheduler.retry.RetryDecision;
+import com.jobscheduler.retry.RetryPolicy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -9,7 +12,8 @@ import java.util.Optional;
 
 /**
  * Executes one claimed job on a worker thread: looks up the handler, runs it outside any
- * database transaction, then records the outcome with a fenced status update.
+ * database transaction, then records the outcome with a fenced status update. Failures go
+ * through the {@link RetryPolicy}: retry with backoff, dead-letter, or fail permanently.
  */
 @Slf4j
 @Component
@@ -19,17 +23,19 @@ public class JobRunner {
 
     private final HandlerRegistry handlerRegistry;
     private final JobQueue jobQueue;
+    private final RetryPolicy retryPolicy;
 
-    public JobRunner(HandlerRegistry handlerRegistry, JobQueue jobQueue) {
+    public JobRunner(HandlerRegistry handlerRegistry, JobQueue jobQueue, RetryPolicy retryPolicy) {
         this.handlerRegistry = handlerRegistry;
         this.jobQueue = jobQueue;
+        this.retryPolicy = retryPolicy;
     }
 
     public void run(ClaimedJob job) {
         Optional<JobHandler> handler = handlerRegistry.find(job.type());
         if (handler.isEmpty()) {
             // Only possible if a handler was removed while jobs of its type were still queued.
-            recordFailure(job, "No handler registered for job type '" + job.type() + "'");
+            handleFailure(job, new NonRetryableJobException("No handler registered for job type '" + job.type() + "'"));
             return;
         }
 
@@ -40,9 +46,7 @@ public class JobRunner {
             if (e instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
             }
-            log.warn("Job {} type={} attempt {}/{} failed: {}",
-                    job.id(), job.type(), job.attempt(), job.maxAttempts(), e.toString());
-            recordFailure(job, describe(e));
+            handleFailure(job, e);
             return;
         }
 
@@ -54,10 +58,18 @@ public class JobRunner {
         }
     }
 
-    private void recordFailure(ClaimedJob job, String error) {
-        if (!jobQueue.markFailed(job, error)) {
+    private void handleFailure(ClaimedJob job, Exception failure) {
+        RetryDecision decision = retryPolicy.decide(job.attempt(), job.maxAttempts(), failure);
+        Optional<JobStatus> next = jobQueue.recordFailure(job, describe(failure), decision);
+        if (next.isEmpty()) {
             logLostClaim(job);
+            return;
         }
+        String outcome = decision instanceof RetryDecision.Retry retry
+                ? "retrying in " + retry.delay().toMillis() + " ms"
+                : "moved to " + next.get();
+        log.warn("Job {} type={} attempt {}/{} failed ({}): {}",
+                job.id(), job.type(), job.attempt(), job.maxAttempts(), outcome, failure.toString());
     }
 
     private static void logLostClaim(ClaimedJob job) {

@@ -16,7 +16,8 @@ import java.time.Duration;
 public record JobSchedulerProperties(
         @Valid @DefaultValue Submission submission,
         @Valid @DefaultValue Worker worker,
-        @Valid @DefaultValue Poller poller) {
+        @Valid @DefaultValue Poller poller,
+        @Valid @DefaultValue Retry retry) {
 
     /**
      * @param defaultMaxAttempts attempts allowed when a submission doesn't specify one
@@ -42,5 +43,14 @@ public record JobSchedulerProperties(
     public record Poller(
             @NotNull @DefaultValue("1s") Duration interval,
             @Min(1) @Max(500) @DefaultValue("10") int batchSize) {
+    }
+
+    /**
+     * Exponential backoff between attempts: the ceiling for attempt n is
+     * {@code min(maxDelay, baseDelay * 2^(n-1))}, and jitter picks a value in its upper half.
+     */
+    public record Retry(
+            @NotNull @DefaultValue("2s") Duration baseDelay,
+            @NotNull @DefaultValue("5m") Duration maxDelay) {
     }
 }

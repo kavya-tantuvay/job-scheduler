@@ -1,10 +1,12 @@
 package com.jobscheduler.job;
 
+import com.jobscheduler.retry.RetryDecision;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * The worker-side view of the {@code jobs} table as a queue: claim due jobs and record the outcome
@@ -49,10 +51,26 @@ public class JobQueue {
         return jobRepository.markSucceeded(job.id(), job.workerId(), job.attempt()) == 1;
     }
 
-    /** @return false if the claim was lost (job reclaimed by someone else); the result is discarded */
+    /**
+     * Applies the retry policy's decision to a failed attempt.
+     *
+     * @return the job's new status, or empty if the claim was lost and nothing was changed
+     */
     @Transactional
-    public boolean markFailed(ClaimedJob job, String error) {
-        return jobRepository.markFailed(job.id(), job.workerId(), job.attempt(), error) == 1;
+    public Optional<JobStatus> recordFailure(ClaimedJob job, String error, RetryDecision decision) {
+        int updated;
+        JobStatus next;
+        if (decision instanceof RetryDecision.Retry retry) {
+            updated = jobRepository.scheduleRetry(job.id(), job.workerId(), job.attempt(), error, retry.delay().toMillis());
+            next = JobStatus.PENDING;
+        } else if (decision instanceof RetryDecision.DeadLetter) {
+            updated = jobRepository.markDead(job.id(), job.workerId(), job.attempt(), error);
+            next = JobStatus.DEAD;
+        } else {
+            updated = jobRepository.markFailed(job.id(), job.workerId(), job.attempt(), error);
+            next = JobStatus.FAILED;
+        }
+        return updated == 1 ? Optional.of(next) : Optional.empty();
     }
 
     /** Puts a claimed-but-never-started job back in the queue. */

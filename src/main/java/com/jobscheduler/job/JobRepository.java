@@ -87,7 +87,32 @@ public interface JobRepository extends JpaRepository<Job, UUID>, JpaSpecificatio
             """, nativeQuery = true)
     int markSucceeded(@Param("id") UUID id, @Param("workerId") String workerId, @Param("attempt") int attempt);
 
-    /** RUNNING → FAILED (terminal). */
+    /**
+     * RUNNING → PENDING after a failed attempt, eligible again after the backoff delay. Uses the
+     * database clock so every instance agrees on when the job becomes due.
+     */
+    @Modifying
+    @Query(value = """
+            UPDATE jobs
+               SET status = 'PENDING', last_error = :error,
+                   run_at = now() + (:delayMillis * INTERVAL '1 millisecond'),
+                   locked_at = NULL, locked_by = NULL, updated_at = now()
+             WHERE id = :id AND status = 'RUNNING' AND locked_by = :workerId AND attempts = :attempt
+            """, nativeQuery = true)
+    int scheduleRetry(@Param("id") UUID id, @Param("workerId") String workerId, @Param("attempt") int attempt,
+                      @Param("error") String error, @Param("delayMillis") long delayMillis);
+
+    /** RUNNING → DEAD: retries exhausted. The job stays in the table as a dead letter for inspection. */
+    @Modifying
+    @Query(value = """
+            UPDATE jobs
+               SET status = 'DEAD', last_error = :error, updated_at = now()
+             WHERE id = :id AND status = 'RUNNING' AND locked_by = :workerId AND attempts = :attempt
+            """, nativeQuery = true)
+    int markDead(@Param("id") UUID id, @Param("workerId") String workerId, @Param("attempt") int attempt,
+                 @Param("error") String error);
+
+    /** RUNNING → FAILED: a permanent (non-retryable) failure. */
     @Modifying
     @Query(value = """
             UPDATE jobs

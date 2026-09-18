@@ -25,6 +25,11 @@ spring:
     web:
       pageable:
         max-page-size: 100
+    # Only used when jobs.rate-limit.enabled=true.
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: 2s
 
   flyway:
     enabled: true
@@ -44,6 +49,10 @@ server:
   shutdown: graceful
 
 management:
+  health:
+    # Report Redis in /actuator/health only when the app actually depends on it.
+    redis:
+      enabled: ${RATE_LIMIT_ENABLED:false}
   endpoints:
     web:
       exposure:
@@ -82,3 +91,7 @@ jobs:
     batch-size: 100
   metrics:
     refresh-interval: 10s
+  rate-limit:
+    enabled: ${RATE_LIMIT_ENABLED:false}
+    per-second:
+      webhook: 5

@@ -5,6 +5,7 @@ import com.jobscheduler.job.ClaimedJob;
 import com.jobscheduler.job.JobQueue;
 import com.jobscheduler.job.JobStatus;
 import com.jobscheduler.metrics.JobMetrics;
+import com.jobscheduler.ratelimit.JobRateLimiter;
 import com.jobscheduler.retry.RetryDecision;
 import com.jobscheduler.retry.RetryPolicy;
 import lombok.extern.slf4j.Slf4j;
@@ -16,6 +17,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
+import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * Executes one claimed job on a worker thread: looks up the handler, runs it outside any
@@ -34,14 +36,16 @@ public class JobRunner {
     private final RetryPolicy retryPolicy;
     private final Clock clock;
     private final JobMetrics metrics;
+    private final JobRateLimiter rateLimiter;
 
     public JobRunner(HandlerRegistry handlerRegistry, JobQueue jobQueue, RetryPolicy retryPolicy, Clock clock,
-                     JobMetrics metrics) {
+                     JobMetrics metrics, JobRateLimiter rateLimiter) {
         this.handlerRegistry = handlerRegistry;
         this.jobQueue = jobQueue;
         this.retryPolicy = retryPolicy;
         this.clock = clock;
         this.metrics = metrics;
+        this.rateLimiter = rateLimiter;
     }
 
     public void run(ClaimedJob job) {
@@ -51,6 +55,11 @@ public class JobRunner {
             // Only possible if a handler was removed while jobs of its type were still queued.
             handleFailure(job, startedAt,
                     new NonRetryableJobException("No handler registered for job type '" + job.type() + "'"));
+            return;
+        }
+
+        if (!rateLimiter.tryAcquire(job.type())) {
+            deferForRateLimit(job);
             return;
         }
 
@@ -100,6 +109,20 @@ public class JobRunner {
                 : "moved to " + next.get();
         log.warn("Job {} type={} attempt {}/{} failed ({}): {}",
                 job.id(), job.type(), job.attempt(), job.maxAttempts(), outcome, failure.toString());
+    }
+
+    /**
+     * The job's type is over its rate limit: put it back for at least one refill interval, plus up to
+     * a second of jitter so deferred jobs trickle back instead of all retrying at the same instant.
+     * No attempt is used.
+     */
+    private void deferForRateLimit(ClaimedJob job) {
+        Duration delay = rateLimiter.refillInterval(job.type())
+                .plusMillis(ThreadLocalRandom.current().nextLong(1_000));
+        if (jobQueue.release(job, delay)) {
+            metrics.recordRateLimited(job.type());
+            log.debug("Job {} type={} over its rate limit; deferred by {} ms", job.id(), job.type(), delay.toMillis());
+        }
     }
 
     private static void logLostClaim(ClaimedJob job) {

@@ -96,9 +96,15 @@ public class JobQueue {
         return jobRepository.recoverExpiredLeases(leaseTimeout.toMillis(), leaseTimeout.toString(), limit);
     }
 
-    /** Puts a claimed-but-never-started job back in the queue. */
+    /** Puts a claimed-but-never-started job back in the queue, without using up an attempt. */
     @Transactional
     public boolean release(ClaimedJob job) {
-        return jobRepository.releaseClaim(job.id(), job.workerId(), job.attempt()) == 1;
+        return release(job, Duration.ZERO);
+    }
+
+    /** Like {@link #release(ClaimedJob)}, but the job only becomes due again after {@code delay}. */
+    @Transactional
+    public boolean release(ClaimedJob job, Duration delay) {
+        return jobRepository.releaseClaim(job.id(), job.workerId(), job.attempt(), delay.toMillis()) == 1;
     }
 }

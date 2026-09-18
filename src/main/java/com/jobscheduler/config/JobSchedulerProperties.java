@@ -10,6 +10,7 @@ import org.springframework.validation.annotation.Validated;
 
 import java.time.Duration;
 import java.time.ZoneId;
+import java.util.Map;
 
 /** All {@code jobs.*} settings, bound and validated at startup. */
 @Validated
@@ -20,7 +21,8 @@ public record JobSchedulerProperties(
         @Valid @DefaultValue Poller poller,
         @Valid @DefaultValue Retry retry,
         @Valid @DefaultValue Reaper reaper,
-        @Valid @DefaultValue Recurring recurring) {
+        @Valid @DefaultValue Recurring recurring,
+        @Valid @DefaultValue RateLimit rateLimit) {
 
     /**
      * @param defaultMaxAttempts attempts allowed when a submission doesn't specify one
@@ -96,5 +98,21 @@ public record JobSchedulerProperties(
         FIRE_ONCE,
         /** Drop missed fire times and simply continue on schedule. */
         SKIP
+    }
+
+    /**
+     * Cluster-wide per-type throughput limits, enforced through Redis.
+     *
+     * @param enabled   requires Redis ({@code spring.data.redis.*}); when false no Redis is needed
+     * @param perSecond maximum jobs of a type started per second across all instances, e.g.
+     *                  {@code webhook: 5} to protect a downstream API; types not listed are unlimited
+     */
+    public record RateLimit(
+            @DefaultValue("false") boolean enabled,
+            Map<String, @Min(1) Integer> perSecond) {
+
+        public RateLimit {
+            perSecond = perSecond == null ? Map.of() : Map.copyOf(perSecond);
+        }
     }
 }

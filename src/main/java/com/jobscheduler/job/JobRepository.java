@@ -143,17 +143,21 @@ public interface JobRepository extends JpaRepository<Job, UUID>, JpaSpecificatio
                    @Param("error") String error);
 
     /**
-     * RUNNING → PENDING for a claim that was never executed (e.g. the worker pool rejected it).
-     * The attempt is given back because the handler never ran.
+     * RUNNING → PENDING for a claim whose handler never ran (worker pool full or shutting down, job
+     * type over its rate limit, interrupted by shutdown). The attempt is given back because it was
+     * not the job's fault. With a delay, the job becomes due again only after it.
      */
     @Modifying
     @Query(value = """
             UPDATE jobs
                SET status = 'PENDING', attempts = attempts - 1,
+                   run_at = CASE WHEN :delayMillis > 0
+                                 THEN now() + (:delayMillis * INTERVAL '1 millisecond') ELSE run_at END,
                    locked_at = NULL, locked_by = NULL, updated_at = now()
              WHERE id = :id AND status = 'RUNNING' AND locked_by = :workerId AND attempts = :attempt
             """, nativeQuery = true)
-    int releaseClaim(@Param("id") UUID id, @Param("workerId") String workerId, @Param("attempt") int attempt);
+    int releaseClaim(@Param("id") UUID id, @Param("workerId") String workerId, @Param("attempt") int attempt,
+                     @Param("delayMillis") long delayMillis);
 
     /**
      * Recovers jobs whose worker stopped reporting (crashed, hung, lost its DB connection):

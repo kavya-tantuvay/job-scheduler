@@ -3,6 +3,7 @@ package com.jobscheduler.metrics;
 import com.jobscheduler.job.ClaimedJob;
 import com.jobscheduler.job.JobStatus;
 import com.jobscheduler.job.QueueStats;
+import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
@@ -22,6 +23,7 @@ import java.util.concurrent.atomic.AtomicLong;
  *   <li>{@code jobs.queue.wait{type}}: time from a job becoming due to being claimed</li>
  *   <li>{@code jobs.execution{type,outcome}}: handler run time. Its count is the number of processed
  *       jobs, so its rate over time is the throughput (jobs/sec)</li>
+ *   <li>{@code jobs.rate.limited{type}}: starts deferred because the type was over its rate limit</li>
  *   <li>{@code jobs.workers.in.flight}: jobs currently dispatched to this instance's pool</li>
  * </ul>
  */
@@ -77,5 +79,13 @@ public class JobMetrics {
                 .publishPercentiles(0.5, 0.95, 0.99)
                 .register(registry)
                 .record(duration);
+    }
+
+    public void recordRateLimited(String type) {
+        Counter.builder("jobs.rate.limited")
+                .description("Job starts deferred because the type was over its rate limit")
+                .tag("type", type)
+                .register(registry)
+                .increment();
     }
 }

@@ -30,6 +30,9 @@ spring:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
       timeout: 2s
+      # Redis is used through a Lua script only; no Spring Data Redis repositories to scan for.
+      repositories:
+        enabled: false
 
   flyway:
     enabled: true

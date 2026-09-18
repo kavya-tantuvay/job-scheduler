@@ -65,7 +65,7 @@ public abstract class AbstractIntegrationTest {
     protected TestHandlers.CountingJobHandler countingHandler;
 
     @BeforeEach
-    void resetState() {
+    protected void resetState() {
         jdbc.execute("TRUNCATE jobs, job_attempts, recurring_jobs");
         countingHandler.reset();
     }

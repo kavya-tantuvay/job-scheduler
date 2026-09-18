@@ -19,7 +19,9 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.EnumMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.regex.Pattern;
@@ -107,6 +109,17 @@ public class JobService {
     public Job get(UUID id) {
         return jobRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Job " + id + " not found"));
+    }
+
+    /** Counts by status plus backlog indicators; cheap enough for dashboards and the metrics refresher. */
+    @Transactional(readOnly = true)
+    public QueueStats stats() {
+        Map<JobStatus, Long> counts = new EnumMap<>(JobStatus.class);
+        for (JobStatus status : JobStatus.values()) {
+            counts.put(status, 0L);
+        }
+        jobRepository.countByStatus().forEach(row -> counts.put(row.getStatus(), row.getCount()));
+        return new QueueStats(counts, jobRepository.countDue(), jobRepository.oldestDueAgeSeconds(), clock.instant());
     }
 
     /** Finished attempts of a job, oldest first. */

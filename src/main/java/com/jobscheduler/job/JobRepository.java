@@ -20,6 +20,26 @@ public interface JobRepository extends JpaRepository<Job, UUID>, JpaSpecificatio
 
     Optional<Job> findByIdempotencyKey(String idempotencyKey);
 
+    interface StatusCount {
+        JobStatus getStatus();
+
+        long getCount();
+    }
+
+    @Query("select j.status as status, count(j) as count from Job j group by j.status")
+    List<StatusCount> countByStatus();
+
+    @Query(value = "SELECT count(*) FROM jobs WHERE status = 'PENDING' AND run_at <= now()", nativeQuery = true)
+    long countDue();
+
+    /** Seconds the oldest due PENDING job has been waiting, or null if none are due. */
+    @Query(value = """
+            SELECT EXTRACT(EPOCH FROM now() - min(run_at))::float8
+              FROM jobs
+             WHERE status = 'PENDING' AND run_at <= now()
+            """, nativeQuery = true)
+    Double oldestDueAgeSeconds();
+
     /**
      * Inserts a keyed job unless the key is already taken. If a concurrent transaction is
      * inserting the same key, PostgreSQL waits for it to finish and then skips this insert, so a

@@ -4,6 +4,7 @@ import com.jobscheduler.job.AttemptFailure;
 import com.jobscheduler.job.ClaimedJob;
 import com.jobscheduler.job.JobQueue;
 import com.jobscheduler.job.JobStatus;
+import com.jobscheduler.metrics.JobMetrics;
 import com.jobscheduler.retry.RetryDecision;
 import com.jobscheduler.retry.RetryPolicy;
 import lombok.extern.slf4j.Slf4j;
@@ -12,6 +13,7 @@ import org.springframework.stereotype.Component;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
 
@@ -31,12 +33,15 @@ public class JobRunner {
     private final JobQueue jobQueue;
     private final RetryPolicy retryPolicy;
     private final Clock clock;
+    private final JobMetrics metrics;
 
-    public JobRunner(HandlerRegistry handlerRegistry, JobQueue jobQueue, RetryPolicy retryPolicy, Clock clock) {
+    public JobRunner(HandlerRegistry handlerRegistry, JobQueue jobQueue, RetryPolicy retryPolicy, Clock clock,
+                     JobMetrics metrics) {
         this.handlerRegistry = handlerRegistry;
         this.jobQueue = jobQueue;
         this.retryPolicy = retryPolicy;
         this.clock = clock;
+        this.metrics = metrics;
     }
 
     public void run(ClaimedJob job) {
@@ -60,10 +65,12 @@ public class JobRunner {
         }
 
         Instant finishedAt = clock.instant();
+        Duration elapsed = Duration.between(startedAt, finishedAt);
         if (jobQueue.markSucceeded(job, startedAt, finishedAt)) {
-            log.debug("Job {} type={} succeeded in {} ms",
-                    job.id(), job.type(), finishedAt.toEpochMilli() - startedAt.toEpochMilli());
+            metrics.recordExecution(job.type(), "succeeded", elapsed);
+            log.debug("Job {} type={} succeeded in {} ms", job.id(), job.type(), elapsed.toMillis());
         } else {
+            metrics.recordExecution(job.type(), "lost_claim", elapsed);
             logLostClaim(job);
         }
     }
@@ -71,11 +78,18 @@ public class JobRunner {
     private void handleFailure(ClaimedJob job, Instant startedAt, Exception failure) {
         RetryDecision decision = retryPolicy.decide(job.attempt(), job.maxAttempts(), failure);
         AttemptFailure details = new AttemptFailure(startedAt, clock.instant(), describe(failure), stackTraceOf(failure));
+        Duration elapsed = Duration.between(details.startedAt(), details.finishedAt());
         Optional<JobStatus> next = jobQueue.recordFailure(job, details, decision);
         if (next.isEmpty()) {
+            metrics.recordExecution(job.type(), "lost_claim", elapsed);
             logLostClaim(job);
             return;
         }
+        metrics.recordExecution(job.type(), switch (next.get()) {
+            case PENDING -> "retried";
+            case DEAD -> "dead";
+            default -> "failed";
+        }, elapsed);
         String outcome = decision instanceof RetryDecision.Retry retry
                 ? "retrying in " + retry.delay().toMillis() + " ms"
                 : "moved to " + next.get();

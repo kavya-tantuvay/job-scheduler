@@ -71,6 +71,14 @@ public class JobController {
         return ResponseEntity.created(location).body(body);
     }
 
+    @Operation(summary = "Queue statistics",
+            description = "Job counts by status, how many PENDING jobs are due now, and how long the oldest "
+                    + "due job has been waiting (a growing value means the workers are falling behind).")
+    @GetMapping("/stats")
+    public QueueStats stats() {
+        return jobService.stats();
+    }
+
     @Operation(summary = "Get a job's status, attempts and last error")
     @ApiResponse(responseCode = "200", description = "The job")
     @ApiResponse(responseCode = "404", description = "No such job",

@@ -77,3 +77,5 @@ jobs:
     misfire-policy: FIRE_ONCE
     misfire-threshold: 1m
     batch-size: 100
+  metrics:
+    refresh-interval: 10s

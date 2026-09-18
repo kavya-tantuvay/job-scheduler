@@ -3,6 +3,7 @@ package com.jobscheduler.worker;
 import com.jobscheduler.config.JobSchedulerProperties;
 import com.jobscheduler.job.ClaimedJob;
 import com.jobscheduler.job.JobQueue;
+import com.jobscheduler.metrics.JobMetrics;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -20,13 +21,15 @@ public class JobPoller {
     private final JobQueue jobQueue;
     private final WorkerPool workerPool;
     private final WorkerIdentity workerIdentity;
+    private final JobMetrics metrics;
     private final int batchSize;
 
     public JobPoller(JobQueue jobQueue, WorkerPool workerPool, WorkerIdentity workerIdentity,
-                     JobSchedulerProperties properties) {
+                     JobMetrics metrics, JobSchedulerProperties properties) {
         this.jobQueue = jobQueue;
         this.workerPool = workerPool;
         this.workerIdentity = workerIdentity;
+        this.metrics = metrics;
         this.batchSize = properties.poller().batchSize();
     }
 
@@ -53,7 +56,10 @@ public class JobPoller {
                 break;
             }
             List<ClaimedJob> claimed = jobQueue.claim(limit, workerIdentity.id());
-            claimed.forEach(workerPool::dispatch);
+            for (ClaimedJob job : claimed) {
+                metrics.recordClaimed(job);
+                workerPool.dispatch(job);
+            }
             dispatched += claimed.size();
             if (claimed.size() < limit) {
                 break; // nothing more is due right now

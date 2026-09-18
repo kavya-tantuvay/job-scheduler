@@ -4,6 +4,8 @@ import com.jobscheduler.config.ExecutorConfig;
 import com.jobscheduler.config.JobSchedulerProperties;
 import com.jobscheduler.job.ClaimedJob;
 import com.jobscheduler.job.JobQueue;
+import io.micrometer.core.instrument.Gauge;
+import io.micrometer.core.instrument.MeterRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.task.TaskRejectedException;
@@ -33,12 +35,16 @@ public class WorkerPool {
     private final Semaphore slots;
 
     public WorkerPool(@Qualifier(ExecutorConfig.WORKER_EXECUTOR) ThreadPoolTaskExecutor executor,
-                      JobRunner jobRunner, JobQueue jobQueue, JobSchedulerProperties properties) {
+                      JobRunner jobRunner, JobQueue jobQueue, JobSchedulerProperties properties,
+                      MeterRegistry meterRegistry) {
         this.executor = executor;
         this.jobRunner = jobRunner;
         this.jobQueue = jobQueue;
         this.capacity = properties.worker().poolSize() + properties.worker().queueCapacity();
         this.slots = new Semaphore(capacity);
+        Gauge.builder("jobs.workers.in.flight", this, WorkerPool::inFlight)
+                .description("Jobs dispatched to this instance's worker pool and not yet finished")
+                .register(meterRegistry);
     }
 
     /**

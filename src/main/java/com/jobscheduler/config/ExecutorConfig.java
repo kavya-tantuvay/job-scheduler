@@ -40,6 +40,10 @@ public class ExecutorConfig {
         executor.setQueueCapacity(worker.poolSize() + worker.queueCapacity());
         executor.setThreadNamePrefix("job-worker-");
         executor.setRejectedExecutionHandler(new ThreadPoolExecutor.AbortPolicy());
+        // GracefulShutdown drains the pool explicitly; these only make Spring's own shutdown wait
+        // instead of interrupting jobs if it gets there first.
+        executor.setWaitForTasksToCompleteOnShutdown(true);
+        executor.setAwaitTerminationMillis(worker.drainTimeout().toMillis());
         return executor;
     }
 }

@@ -32,11 +32,13 @@ public record JobSchedulerProperties(
      * @param poolSize      number of worker threads, i.e. jobs executing concurrently per instance
      * @param queueCapacity claimed jobs that may wait in memory for a free thread
      * @param instanceId    identifies this instance in {@code locked_by}; generated when blank
+     * @param drainTimeout  on shutdown, how long to wait for in-flight jobs before interrupting them
      */
     public record Worker(
             @Min(1) @Max(256) @DefaultValue("8") int poolSize,
             @Min(0) @Max(1024) @DefaultValue("8") int queueCapacity,
-            String instanceId) {
+            String instanceId,
+            @NotNull @DefaultValue("30s") Duration drainTimeout) {
     }
 
     /**

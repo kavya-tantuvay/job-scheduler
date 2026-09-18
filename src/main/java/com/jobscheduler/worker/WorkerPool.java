@@ -12,7 +12,12 @@ import org.springframework.core.task.TaskRejectedException;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Runs claimed jobs on the bounded worker executor. The executor is used directly (rather than
@@ -33,6 +38,8 @@ public class WorkerPool {
     private final JobQueue jobQueue;
     private final int capacity;
     private final Semaphore slots;
+    /** Claims handed to the executor that have not finished; used to hand back leftovers on shutdown. */
+    private final Set<ClaimedJob> inFlightJobs = ConcurrentHashMap.newKeySet();
 
     public WorkerPool(@Qualifier(ExecutorConfig.WORKER_EXECUTOR) ThreadPoolTaskExecutor executor,
                       JobRunner jobRunner, JobQueue jobQueue, JobSchedulerProperties properties,
@@ -66,19 +73,52 @@ public class WorkerPool {
             giveBack(job, "no free worker slot");
             return;
         }
+        inFlightJobs.add(job);
         try {
             executor.execute(() -> {
                 try {
                     runSafely(job);
                 } finally {
+                    inFlightJobs.remove(job);
                     slots.release();
                 }
             });
         } catch (TaskRejectedException e) {
             // The executor is shutting down.
+            inFlightJobs.remove(job);
             slots.release();
             giveBack(job, "worker pool is not accepting tasks");
         }
+    }
+
+    /**
+     * Graceful shutdown of the pool: stop accepting work and let running and queued jobs finish.
+     * If they don't finish within {@code timeout}, interrupt them and return every unfinished claim
+     * to the queue (fenced, so a job that finished at the last moment is not touched) rather than
+     * leaving it RUNNING until its lease expires.
+     *
+     * @return number of claims handed back to the queue
+     */
+    public int drain(Duration timeout) {
+        ThreadPoolExecutor pool = executor.getThreadPoolExecutor();
+        pool.shutdown();
+        try {
+            if (pool.awaitTermination(timeout.toMillis(), TimeUnit.MILLISECONDS)) {
+                return 0;
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        log.warn("{} job(s) still running after {}; interrupting them and returning them to the queue",
+                inFlightJobs.size(), timeout);
+        pool.shutdownNow(); // interrupts running handlers and drops queued tasks
+        int released = 0;
+        for (ClaimedJob job : Set.copyOf(inFlightJobs)) {
+            if (jobQueue.release(job)) {
+                released++;
+            }
+        }
+        return released;
     }
 
     /** The job is already RUNNING in the database; return it to the queue instead of stranding it. */

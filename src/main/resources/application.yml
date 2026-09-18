@@ -40,6 +40,8 @@ spring:
 
 server:
   port: ${SERVER_PORT:8080}
+  # Finish in-flight HTTP requests on shutdown instead of dropping them.
+  shutdown: graceful
 
 management:
   endpoints:
@@ -61,6 +63,7 @@ jobs:
     pool-size: ${WORKER_POOL_SIZE:8}
     queue-capacity: ${WORKER_QUEUE_CAPACITY:8}
     instance-id: ${INSTANCE_ID:}
+    drain-timeout: ${WORKER_DRAIN_TIMEOUT:30s}
   poller:
     interval: 1s
     batch-size: 10

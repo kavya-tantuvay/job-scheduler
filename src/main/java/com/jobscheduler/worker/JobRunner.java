@@ -56,10 +56,15 @@ public class JobRunner {
 
         try {
             handler.get().handle(new JobContext(job.id(), job.type(), job.payload(), job.attempt(), job.maxAttempts()));
+        } catch (InterruptedException e) {
+            // Worker threads are only interrupted when the pool is force-stopped during shutdown.
+            // That isn't the job's fault: hand it back without using up an attempt.
+            Thread.currentThread().interrupt();
+            boolean released = jobQueue.release(job);
+            log.warn("Job {} interrupted by shutdown; {}", job.id(),
+                    released ? "returned to the queue" : "it was no longer owned by this worker");
+            return;
         } catch (Exception e) {
-            if (e instanceof InterruptedException) {
-                Thread.currentThread().interrupt();
-            }
             handleFailure(job, startedAt, e);
             return;
         }

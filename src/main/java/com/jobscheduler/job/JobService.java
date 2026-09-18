@@ -84,6 +84,19 @@ public class JobService {
         return replay(existing, request, job.getPayload());
     }
 
+    /**
+     * Enqueues a job on behalf of the system (e.g. a recurring schedule) unless a job with the
+     * same idempotency key already exists. Joins the caller's transaction.
+     *
+     * @return true if a new job was enqueued
+     */
+    @Transactional
+    public boolean enqueueOnce(String type, JsonNode payload, Instant runAt, String idempotencyKey) {
+        return jobRepository.insertIfIdempotencyKeyUnused(UUID.randomUUID(), type, toJson(payload), 0,
+                properties.submission().defaultMaxAttempts(), runAt.truncatedTo(ChronoUnit.MICROS),
+                idempotencyKey) == 1;
+    }
+
     private static SubmissionResult created(Job job) {
         log.info("Submitted job {} type={} priority={} runAt={}",
                 job.getId(), job.getType(), job.getPriority(), job.getRunAt());

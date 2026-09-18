@@ -4,6 +4,7 @@ import com.jobscheduler.retry.RetryDecision;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
@@ -12,6 +13,10 @@ import java.util.Optional;
  * The worker-side view of the {@code jobs} table as a queue: claim due jobs and record the outcome
  * of each claim. Each method is its own short transaction; no transaction is held while a job's
  * handler is running.
+ *
+ * <p>Outcome updates are fenced on the claim ({@code locked_by} + {@code attempts}). The attempt
+ * history row is written in the same transaction and only if the fenced update matched, so a
+ * worker that lost its claim leaves no trace and each attempt is recorded exactly once.
  */
 @Component
 public class JobQueue {
@@ -20,9 +25,11 @@ public class JobQueue {
             Comparator.comparingInt(ClaimedJob::priority).reversed().thenComparing(ClaimedJob::runAt);
 
     private final JobRepository jobRepository;
+    private final JobAttemptRepository attemptRepository;
 
-    public JobQueue(JobRepository jobRepository) {
+    public JobQueue(JobRepository jobRepository, JobAttemptRepository attemptRepository) {
         this.jobRepository = jobRepository;
+        this.attemptRepository = attemptRepository;
     }
 
     /**
@@ -47,8 +54,12 @@ public class JobQueue {
 
     /** @return false if the claim was lost (job reclaimed by someone else); the result is discarded */
     @Transactional
-    public boolean markSucceeded(ClaimedJob job) {
-        return jobRepository.markSucceeded(job.id(), job.workerId(), job.attempt()) == 1;
+    public boolean markSucceeded(ClaimedJob job, Instant startedAt, Instant finishedAt) {
+        if (jobRepository.markSucceeded(job.id(), job.workerId(), job.attempt()) == 0) {
+            return false;
+        }
+        attemptRepository.save(JobAttempt.succeeded(job, startedAt, finishedAt));
+        return true;
     }
 
     /**
@@ -57,20 +68,25 @@ public class JobQueue {
      * @return the job's new status, or empty if the claim was lost and nothing was changed
      */
     @Transactional
-    public Optional<JobStatus> recordFailure(ClaimedJob job, String error, RetryDecision decision) {
+    public Optional<JobStatus> recordFailure(ClaimedJob job, AttemptFailure failure, RetryDecision decision) {
         int updated;
         JobStatus next;
         if (decision instanceof RetryDecision.Retry retry) {
-            updated = jobRepository.scheduleRetry(job.id(), job.workerId(), job.attempt(), error, retry.delay().toMillis());
+            updated = jobRepository.scheduleRetry(job.id(), job.workerId(), job.attempt(), failure.error(),
+                    retry.delay().toMillis());
             next = JobStatus.PENDING;
         } else if (decision instanceof RetryDecision.DeadLetter) {
-            updated = jobRepository.markDead(job.id(), job.workerId(), job.attempt(), error);
+            updated = jobRepository.markDead(job.id(), job.workerId(), job.attempt(), failure.error());
             next = JobStatus.DEAD;
         } else {
-            updated = jobRepository.markFailed(job.id(), job.workerId(), job.attempt(), error);
+            updated = jobRepository.markFailed(job.id(), job.workerId(), job.attempt(), failure.error());
             next = JobStatus.FAILED;
         }
-        return updated == 1 ? Optional.of(next) : Optional.empty();
+        if (updated == 0) {
+            return Optional.empty();
+        }
+        attemptRepository.save(JobAttempt.failed(job, failure));
+        return Optional.of(next);
     }
 
     /** Puts a claimed-but-never-started job back in the queue. */

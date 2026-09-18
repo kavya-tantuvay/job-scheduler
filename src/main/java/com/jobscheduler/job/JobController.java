@@ -2,6 +2,7 @@ package com.jobscheduler.job;
 
 import com.jobscheduler.common.dto.ApiError;
 import com.jobscheduler.common.dto.PageResponse;
+import com.jobscheduler.job.dto.JobAttemptResponse;
 import com.jobscheduler.job.dto.JobResponse;
 import com.jobscheduler.job.dto.SubmitJobRequest;
 import io.swagger.v3.oas.annotations.Operation;
@@ -27,6 +28,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
 import java.net.URI;
+import java.util.List;
 import java.util.UUID;
 
 @Tag(name = "Jobs", description = "Submit, inspect and cancel jobs")
@@ -75,6 +77,17 @@ public class JobController {
     @GetMapping("/{id}")
     public JobResponse get(@PathVariable UUID id) {
         return JobResponse.from(jobService.get(id));
+    }
+
+    @Operation(summary = "Get a job's attempt history",
+            description = "One entry per finished attempt, oldest first: worker, timing, outcome, and for "
+                    + "failures the error and stack trace. The first place to look when debugging a failed job.")
+    @ApiResponse(responseCode = "200", description = "Attempt history (empty if the job has not run yet)")
+    @ApiResponse(responseCode = "404", description = "No such job",
+            content = @Content(schema = @Schema(implementation = ApiError.class)))
+    @GetMapping("/{id}/attempts")
+    public List<JobAttemptResponse> attempts(@PathVariable UUID id) {
+        return jobService.attempts(id).stream().map(JobAttemptResponse::from).toList();
     }
 
     @Operation(summary = "List jobs, newest first, optionally filtered by status and type",

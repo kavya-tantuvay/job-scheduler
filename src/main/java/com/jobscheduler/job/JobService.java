@@ -20,6 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.regex.Pattern;
@@ -32,14 +33,17 @@ public class JobService {
     private static final Pattern IDEMPOTENCY_KEY = Pattern.compile("^[\\x21-\\x7E]{1," + MAX_IDEMPOTENCY_KEY_LENGTH + "}$");
 
     private final JobRepository jobRepository;
+    private final JobAttemptRepository attemptRepository;
     private final HandlerRegistry handlerRegistry;
     private final JobSchedulerProperties properties;
     private final Clock clock;
     private final ObjectMapper objectMapper;
 
-    public JobService(JobRepository jobRepository, HandlerRegistry handlerRegistry,
+    public JobService(JobRepository jobRepository, JobAttemptRepository attemptRepository,
+                      HandlerRegistry handlerRegistry,
                       JobSchedulerProperties properties, Clock clock, ObjectMapper objectMapper) {
         this.jobRepository = jobRepository;
+        this.attemptRepository = attemptRepository;
         this.handlerRegistry = handlerRegistry;
         this.properties = properties;
         this.clock = clock;
@@ -91,6 +95,15 @@ public class JobService {
     public Job get(UUID id) {
         return jobRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Job " + id + " not found"));
+    }
+
+    /** Finished attempts of a job, oldest first. */
+    @Transactional(readOnly = true)
+    public List<JobAttempt> attempts(UUID jobId) {
+        if (!jobRepository.existsById(jobId)) {
+            throw new ResourceNotFoundException("Job " + jobId + " not found");
+        }
+        return attemptRepository.findByJobIdOrderByAttemptAsc(jobId);
     }
 
     @Transactional(readOnly = true)

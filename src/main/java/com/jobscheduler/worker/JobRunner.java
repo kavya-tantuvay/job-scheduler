@@ -1,5 +1,6 @@
 package com.jobscheduler.worker;
 
+import com.jobscheduler.job.AttemptFailure;
 import com.jobscheduler.job.ClaimedJob;
 import com.jobscheduler.job.JobQueue;
 import com.jobscheduler.job.JobStatus;
@@ -8,6 +9,10 @@ import com.jobscheduler.retry.RetryPolicy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.io.PrintWriter;
+import java.io.StringWriter;
+import java.time.Clock;
+import java.time.Instant;
 import java.util.Optional;
 
 /**
@@ -20,47 +25,53 @@ import java.util.Optional;
 public class JobRunner {
 
     static final int MAX_ERROR_LENGTH = 2_000;
+    static final int MAX_STACK_TRACE_LENGTH = 8_000;
 
     private final HandlerRegistry handlerRegistry;
     private final JobQueue jobQueue;
     private final RetryPolicy retryPolicy;
+    private final Clock clock;
 
-    public JobRunner(HandlerRegistry handlerRegistry, JobQueue jobQueue, RetryPolicy retryPolicy) {
+    public JobRunner(HandlerRegistry handlerRegistry, JobQueue jobQueue, RetryPolicy retryPolicy, Clock clock) {
         this.handlerRegistry = handlerRegistry;
         this.jobQueue = jobQueue;
         this.retryPolicy = retryPolicy;
+        this.clock = clock;
     }
 
     public void run(ClaimedJob job) {
+        Instant startedAt = clock.instant();
         Optional<JobHandler> handler = handlerRegistry.find(job.type());
         if (handler.isEmpty()) {
             // Only possible if a handler was removed while jobs of its type were still queued.
-            handleFailure(job, new NonRetryableJobException("No handler registered for job type '" + job.type() + "'"));
+            handleFailure(job, startedAt,
+                    new NonRetryableJobException("No handler registered for job type '" + job.type() + "'"));
             return;
         }
 
-        long startNanos = System.nanoTime();
         try {
             handler.get().handle(new JobContext(job.id(), job.type(), job.payload(), job.attempt(), job.maxAttempts()));
         } catch (Exception e) {
             if (e instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
             }
-            handleFailure(job, e);
+            handleFailure(job, startedAt, e);
             return;
         }
 
-        long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000;
-        if (jobQueue.markSucceeded(job)) {
-            log.debug("Job {} type={} succeeded in {} ms", job.id(), job.type(), elapsedMs);
+        Instant finishedAt = clock.instant();
+        if (jobQueue.markSucceeded(job, startedAt, finishedAt)) {
+            log.debug("Job {} type={} succeeded in {} ms",
+                    job.id(), job.type(), finishedAt.toEpochMilli() - startedAt.toEpochMilli());
         } else {
             logLostClaim(job);
         }
     }
 
-    private void handleFailure(ClaimedJob job, Exception failure) {
+    private void handleFailure(ClaimedJob job, Instant startedAt, Exception failure) {
         RetryDecision decision = retryPolicy.decide(job.attempt(), job.maxAttempts(), failure);
-        Optional<JobStatus> next = jobQueue.recordFailure(job, describe(failure), decision);
+        AttemptFailure details = new AttemptFailure(startedAt, clock.instant(), describe(failure), stackTraceOf(failure));
+        Optional<JobStatus> next = jobQueue.recordFailure(job, details, decision);
         if (next.isEmpty()) {
             logLostClaim(job);
             return;
@@ -88,5 +99,12 @@ public class JobRunner {
             text.append(" (root cause: ").append(root).append(')');
         }
         return text.length() <= MAX_ERROR_LENGTH ? text.toString() : text.substring(0, MAX_ERROR_LENGTH);
+    }
+
+    static String stackTraceOf(Throwable error) {
+        StringWriter out = new StringWriter();
+        error.printStackTrace(new PrintWriter(out));
+        String trace = out.toString();
+        return trace.length() <= MAX_STACK_TRACE_LENGTH ? trace : trace.substring(0, MAX_STACK_TRACE_LENGTH) + "\n\t...";
     }
 }

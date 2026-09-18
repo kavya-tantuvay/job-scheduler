@@ -19,6 +19,7 @@ public record JobResponse(
         Instant lockedAt,
         String lockedBy,
         String lastError,
+        String idempotencyKey,
         Instant createdAt,
         Instant updatedAt
 ) {
@@ -36,6 +37,7 @@ public record JobResponse(
                 job.getLockedAt(),
                 job.getLockedBy(),
                 job.getLastError(),
+                job.getIdempotencyKey(),
                 job.getCreatedAt(),
                 job.getUpdatedAt());
     }

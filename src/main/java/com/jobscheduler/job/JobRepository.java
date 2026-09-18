@@ -6,7 +6,9 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -15,6 +17,28 @@ import java.util.UUID;
  * other: whoever loses the race simply updates 0 rows.
  */
 public interface JobRepository extends JpaRepository<Job, UUID>, JpaSpecificationExecutor<Job> {
+
+    Optional<Job> findByIdempotencyKey(String idempotencyKey);
+
+    /**
+     * Inserts a keyed job unless the key is already taken. If a concurrent transaction is
+     * inserting the same key, PostgreSQL waits for it to finish and then skips this insert, so a
+     * duplicate is a normal "0 rows" outcome rather than a constraint-violation exception.
+     *
+     * @return 1 if inserted, 0 if a job with this key already exists
+     */
+    @Modifying
+    @Query(value = """
+            INSERT INTO jobs (id, type, payload, status, priority, attempts, max_attempts, run_at,
+                              idempotency_key, created_at, updated_at)
+            VALUES (:id, :type, CAST(:payload AS jsonb), 'PENDING', :priority, 0, :maxAttempts, :runAt,
+                    :idempotencyKey, now(), now())
+            ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
+            """, nativeQuery = true)
+    int insertIfIdempotencyKeyUnused(@Param("id") UUID id, @Param("type") String type,
+                                     @Param("payload") String payload, @Param("priority") int priority,
+                                     @Param("maxAttempts") int maxAttempts, @Param("runAt") Instant runAt,
+                                     @Param("idempotencyKey") String idempotencyKey);
 
     /**
      * Atomically claims up to {@code limit} due jobs for {@code workerId}.

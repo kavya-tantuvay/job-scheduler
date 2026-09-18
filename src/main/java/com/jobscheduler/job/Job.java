@@ -14,6 +14,7 @@ import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.Objects;
 
 /**
@@ -66,15 +67,26 @@ public class Job extends BaseEntity {
     @Column(name = "last_error")
     private String lastError;
 
+    /** Client-supplied de-duplication key; unique when present. */
+    @Column(name = "idempotency_key")
+    private String idempotencyKey;
+
     public static Job create(String type, JsonNode payload, int priority, int maxAttempts, Instant runAt) {
+        return create(type, payload, priority, maxAttempts, runAt, null);
+    }
+
+    public static Job create(String type, JsonNode payload, int priority, int maxAttempts, Instant runAt,
+                             String idempotencyKey) {
         Job job = new Job();
         job.type = Objects.requireNonNull(type, "type");
         job.payload = Objects.requireNonNull(payload, "payload");
         job.priority = priority;
         job.maxAttempts = maxAttempts;
-        job.runAt = Objects.requireNonNull(runAt, "runAt");
+        // PostgreSQL timestamps have microsecond precision; match it so in-memory and stored values agree.
+        job.runAt = Objects.requireNonNull(runAt, "runAt").truncatedTo(ChronoUnit.MICROS);
         job.status = JobStatus.PENDING;
         job.attempts = 0;
+        job.idempotencyKey = idempotencyKey;
         return job;
     }
 }

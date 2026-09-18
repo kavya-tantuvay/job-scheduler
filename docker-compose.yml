@@ -1,3 +1,6 @@
+# `docker compose up --build` runs the whole stack: PostgreSQL, Redis and the application.
+# For local development run just the dependencies (`docker compose up postgres redis`) and start
+# the app with ./mvnw spring-boot:run.
 services:
   postgres:
     image: postgres:16-alpine
@@ -27,6 +30,25 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
+  app:
+    build: .
+    container_name: job-scheduler-app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/jobscheduler
+      DB_USERNAME: jobscheduler
+      DB_PASSWORD: jobscheduler
+      REDIS_HOST: redis
+      RATE_LIMIT_ENABLED: "true"
+    ports:
+      - "8080:8080"
+    # Longer than jobs.worker.drain-timeout (30s) so in-flight jobs can finish on `docker compose stop`.
+    stop_grace_period: 40s
 
 volumes:
   postgres-data:

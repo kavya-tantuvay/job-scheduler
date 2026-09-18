@@ -60,4 +60,14 @@ public class RecurringJob extends BaseEntity {
     public void advanceTo(Instant nextRunAt) {
         this.nextRunAt = Objects.requireNonNull(nextRunAt, "nextRunAt");
     }
+
+    public void pause() {
+        this.enabled = false;
+    }
+
+    /** Re-enables the schedule from {@code nextRunAt}; fire times missed while paused are not made up. */
+    public void resume(Instant nextRunAt) {
+        this.enabled = true;
+        advanceTo(nextRunAt);
+    }
 }

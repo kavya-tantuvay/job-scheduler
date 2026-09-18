@@ -3,7 +3,6 @@ package com.jobscheduler.job;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.jobscheduler.common.exception.ConflictException;
 import com.jobscheduler.common.exception.InvalidRequestException;
 import com.jobscheduler.common.exception.ResourceNotFoundException;
@@ -64,7 +63,7 @@ public class JobService {
         String key = normaliseIdempotencyKey(idempotencyKey);
         Job job = Job.create(
                 request.type(),
-                normalisePayload(request.payload()),
+                JobPayloads.normalise(request.payload()),
                 Objects.requireNonNullElse(request.priority(), 0),
                 Objects.requireNonNullElse(request.maxAttempts(), properties.submission().defaultMaxAttempts()),
                 Objects.requireNonNullElseGet(request.runAt(), clock::instant),
@@ -190,15 +189,5 @@ public class JobService {
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("Could not serialise job payload", e);
         }
-    }
-
-    private static JsonNode normalisePayload(JsonNode payload) {
-        if (payload == null || payload.isNull()) {
-            return JsonNodeFactory.instance.objectNode();
-        }
-        if (!payload.isObject()) {
-            throw new InvalidRequestException("payload must be a JSON object");
-        }
-        return payload;
     }
 }

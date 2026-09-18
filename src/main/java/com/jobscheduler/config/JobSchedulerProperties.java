@@ -9,6 +9,7 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
 import org.springframework.validation.annotation.Validated;
 
 import java.time.Duration;
+import java.time.ZoneId;
 
 /** All {@code jobs.*} settings, bound and validated at startup. */
 @Validated
@@ -18,7 +19,8 @@ public record JobSchedulerProperties(
         @Valid @DefaultValue Worker worker,
         @Valid @DefaultValue Poller poller,
         @Valid @DefaultValue Retry retry,
-        @Valid @DefaultValue Reaper reaper) {
+        @Valid @DefaultValue Reaper reaper,
+        @Valid @DefaultValue Recurring recurring) {
 
     /**
      * @param defaultMaxAttempts attempts allowed when a submission doesn't specify one
@@ -68,5 +70,29 @@ public record JobSchedulerProperties(
             @NotNull @DefaultValue("5m") Duration leaseTimeout,
             @NotNull @DefaultValue("30s") Duration interval,
             @Min(1) @Max(1000) @DefaultValue("100") int batchSize) {
+    }
+
+    /**
+     * Cron-style recurring jobs.
+     *
+     * @param interval          how often due definitions are checked
+     * @param zone              time zone cron expressions are evaluated in
+     * @param misfirePolicy     what to do about fire times missed by more than {@code misfireThreshold}
+     * @param misfireThreshold  lateness up to which a fire time counts as on time rather than missed
+     * @param batchSize         maximum definitions fired per transaction
+     */
+    public record Recurring(
+            @NotNull @DefaultValue("1s") Duration interval,
+            @NotNull @DefaultValue("UTC") ZoneId zone,
+            @NotNull @DefaultValue("FIRE_ONCE") MisfirePolicy misfirePolicy,
+            @NotNull @DefaultValue("1m") Duration misfireThreshold,
+            @Min(1) @Max(1000) @DefaultValue("100") int batchSize) {
+    }
+
+    public enum MisfirePolicy {
+        /** Run once to make up for any number of missed fire times, then continue on schedule. */
+        FIRE_ONCE,
+        /** Drop missed fire times and simply continue on schedule. */
+        SKIP
     }
 }

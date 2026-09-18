@@ -4,6 +4,7 @@ import com.jobscheduler.common.dto.ApiError;
 import com.jobscheduler.common.dto.ApiError.FieldViolation;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.mapping.PropertyReferenceException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
@@ -60,6 +61,14 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(ConflictException.class)
     ResponseEntity<ApiError> handleConflict(ConflictException ex, HttpServletRequest request) {
         return build(HttpStatus.CONFLICT, ex.getMessage(), request, List.of());
+    }
+
+    /** A unique/foreign-key constraint caught a race that the service-level checks missed. */
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    ResponseEntity<ApiError> handleDataIntegrity(DataIntegrityViolationException ex, HttpServletRequest request) {
+        log.warn("Constraint violation for {} {}: {}", request.getMethod(), request.getRequestURI(),
+                ex.getMostSpecificCause().getMessage());
+        return build(HttpStatus.CONFLICT, "The request conflicts with existing data", request, List.of());
     }
 
     @ExceptionHandler(Exception.class)

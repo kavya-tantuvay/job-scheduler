@@ -71,3 +71,9 @@ jobs:
     lease-timeout: 5m
     interval: 30s
     batch-size: 100
+  recurring:
+    interval: 1s
+    zone: UTC
+    misfire-policy: FIRE_ONCE
+    misfire-threshold: 1m
+    batch-size: 100

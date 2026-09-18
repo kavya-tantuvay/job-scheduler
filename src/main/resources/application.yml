@@ -30,6 +30,14 @@ spring:
     enabled: true
     locations: classpath:db/migration
 
+  # Thread pool behind @Scheduled. The default is a single thread, which would let one slow
+  # background loop delay all the others.
+  task:
+    scheduling:
+      pool:
+        size: 3
+      thread-name-prefix: scheduler-
+
 server:
   port: ${SERVER_PORT:8080}
 
@@ -49,3 +57,10 @@ springdoc:
 jobs:
   submission:
     default-max-attempts: 3
+  worker:
+    pool-size: ${WORKER_POOL_SIZE:8}
+    queue-capacity: ${WORKER_QUEUE_CAPACITY:8}
+    instance-id: ${INSTANCE_ID:}
+  poller:
+    interval: 1s
+    batch-size: 10

@@ -38,12 +38,13 @@ spring:
     enabled: true
     locations: classpath:db/migration
 
-  # Thread pool behind @Scheduled. The default is a single thread, which would let one slow
-  # background loop delay all the others.
+  # Thread pool behind @Scheduled: one thread per background loop (poller, reaper, recurring
+  # scheduler, metrics refresher). The default single thread would let the poller, which keeps
+  # its thread while draining a backlog, delay all the others.
   task:
     scheduling:
       pool:
-        size: 3
+        size: 4
       thread-name-prefix: scheduler-
 
 server:

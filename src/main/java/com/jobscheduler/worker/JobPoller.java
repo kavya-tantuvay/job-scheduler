@@ -8,6 +8,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -24,6 +25,7 @@ public class JobPoller {
     private final WorkerIdentity workerIdentity;
     private final JobMetrics metrics;
     private final int batchSize;
+    private final Duration maxWaitForCapacity;
     /** Held for the duration of a poll, so {@link #stopPolling()} can wait for one in progress. */
     private final ReentrantLock pollLock = new ReentrantLock();
     private volatile boolean accepting = true;
@@ -35,6 +37,7 @@ public class JobPoller {
         this.workerIdentity = workerIdentity;
         this.metrics = metrics;
         this.batchSize = properties.poller().batchSize();
+        this.maxWaitForCapacity = properties.poller().interval();
     }
 
     /** fixedDelay (not fixedRate): the next poll starts only after this one has finished. */
@@ -48,7 +51,14 @@ public class JobPoller {
     }
 
     /**
-     * Claims and dispatches jobs until the pool is full or no more jobs are due.
+     * Claims and dispatches due jobs. If a claim comes back full there is probably a backlog, so
+     * rather than returning and waiting for the next tick, the poller keeps going: it waits until
+     * half the pool's slots are free and claims again straight away ("drain mode"). Without this,
+     * throughput under load would be capped at roughly {@code pool capacity / poll interval}.
+     * Waiting for half the slots (rather than one) keeps claims batched, so the database sees one
+     * claim per several jobs, while the jobs still buffered keep the worker threads busy.
+     * It returns once the queue has no more due jobs, or the pool stays full for a whole poll
+     * interval (long-running jobs), or polling is stopped.
      *
      * @return number of jobs dispatched
      */
@@ -58,6 +68,15 @@ public class JobPoller {
             return accepting ? claimAndDispatch() : 0;
         } finally {
             pollLock.unlock();
+        }
+    }
+
+    private boolean awaitCapacity(int refillThreshold) {
+        try {
+            return workerPool.awaitCapacity(refillThreshold, maxWaitForCapacity);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
         }
     }
 
@@ -73,12 +92,19 @@ public class JobPoller {
     }
 
     private int claimAndDispatch() {
+        int refillThreshold = Math.max(1, Math.min(batchSize, workerPool.capacity() / 2));
         int dispatched = 0;
+        boolean backlog = false;
         while (accepting) {
-            int limit = Math.min(batchSize, workerPool.availableCapacity());
-            if (limit == 0) {
-                break;
+            int free = workerPool.availableCapacity();
+            if (backlog ? free < refillThreshold : free == 0) {
+                // Pool (nearly) full. With a backlog, wait for room and continue; otherwise stop.
+                if (!backlog || !awaitCapacity(refillThreshold)) {
+                    break;
+                }
+                continue;
             }
+            int limit = Math.min(batchSize, workerPool.availableCapacity());
             List<ClaimedJob> claimed = jobQueue.claim(limit, workerIdentity.id());
             for (ClaimedJob job : claimed) {
                 metrics.recordClaimed(job);
@@ -88,6 +114,7 @@ public class JobPoller {
             if (claimed.size() < limit) {
                 break; // nothing more is due right now
             }
+            backlog = true;
         }
         if (dispatched > 0) {
             log.debug("Dispatched {} job(s)", dispatched);

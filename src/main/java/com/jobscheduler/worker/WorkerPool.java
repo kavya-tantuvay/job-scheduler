@@ -62,6 +62,24 @@ public class WorkerPool {
         return slots.availablePermits();
     }
 
+    /** Total slots: worker threads plus the in-memory prefetch buffer. */
+    public int capacity() {
+        return capacity;
+    }
+
+    /**
+     * Blocks until at least {@code freeSlots} slots are free or {@code timeout} passes.
+     *
+     * @return true if that many slots are free now
+     */
+    public boolean awaitCapacity(int freeSlots, Duration timeout) throws InterruptedException {
+        if (slots.tryAcquire(freeSlots, timeout.toMillis(), TimeUnit.MILLISECONDS)) {
+            slots.release(freeSlots); // only waiting for room here; dispatch() takes slots for real
+            return true;
+        }
+        return false;
+    }
+
     /** Number of jobs dispatched to this pool that have not finished yet (running or queued). */
     public int inFlight() {
         return capacity - slots.availablePermits();
